@@ -1,0 +1,123 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jan 16 16:50:35 2026
+
+@author: Admin_01
+"""
+
+import imaplib
+import email
+from email.header import decode_header
+import pandas as pd
+from datetime import datetime
+
+class EmailAutomation:
+    def __init__(self, username, password, imap_url='imap.gmail.com'):
+        self.username = username
+        self.password = password
+        self.imap_url = imap_url
+        self.mail = None
+        # Define filtering keywords (case-insensitive)
+        self.keywords = ['extension', 'extend', 'extense'...]
+
+    def connect(self):
+        """Establish connection to the server"""
+        try:
+            self.mail = imaplib.IMAP4_SSL(self.imap_url)
+            self.mail.login(self.username, self.password)
+            return True
+        except Exception as e:
+            print(f"Error: {e}")
+            return False
+
+    def decode_str(self, s):
+        """Decode email headers for readability"""
+        if s is None: return ""
+        value, charset = decode_header(s)[0]
+        if charset: return value.decode(charset)
+        return str(value)
+
+    def get_email_body(self, msg):
+        """Extract email body text"""
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                disposition = str(part.get("Content-Disposition"))
+                if content_type == "text/plain" and "attachment" not in disposition:
+                    try:
+                        return part.get_payload(decode=True).decode(errors='ignore')
+                    except: pass
+        else:
+            try:
+                return msg.get_payload(decode=True).decode(errors='ignore')
+            except: pass
+        return ""
+
+    def fetch_emails(self):
+        """Fetch and filter emails based on user-defined time window"""
+        # 1. Interactive Command for Date Range
+        date_input = input("Please enter the date range (format: yyyy/mm/dd-yyyy/mm/dd): ")
+        try:
+            start_str, end_str = date_input.split('-')
+            # Parse dates for IMAP (format: DD-Mon-YYYY)
+            start_dt = datetime.strptime(start_str.strip(), "%Y/%m/%d")
+            end_dt = datetime.strptime(end_str.strip(), "%Y/%m/%d")
+            
+            # IMAP Search uses 'SINCE' (inclusive) and 'BEFORE' (exclusive, so we add 1 day)
+            imap_since = start_dt.strftime("%d-%b-%Y")
+            imap_before = end_dt.strftime("%d-%b-%Y") 
+        except Exception as e:
+            print(f"Invalid format: {e}")
+            return []
+
+        self.mail.select("inbox")
+        
+        # 2. Server-side Date Filtering to save time
+        search_criteria = f'(SINCE "{imap_since}" BEFORE "{imap_before}")'
+        status, data = self.mail.search(None, search_criteria)
+        mail_ids = data[0].split()
+        
+        extracted_data = []
+        print(f"Scanning {len(mail_ids)} emails in the specified range...")
+
+        for m_id in mail_ids:
+            _, msg_data = self.mail.fetch(m_id, "(RFC822)")
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    subject = self.decode_str(msg["Subject"])
+                    sender = self.decode_str(msg["From"])
+                    body = self.get_email_body(msg)
+                    msg_id = msg.get("Message-ID")
+
+                    full_text = (subject + body).lower()
+                    if any(key in full_text for key in self.keywords):
+                        # Simple, serious output
+                        print(f"Find match email: {subject[:50]}...")
+                        
+                        # 4. Create clickable Google Search link using Message-ID
+                        # Note: This formula works in most Excel viewers
+                        search_link = f'rfc822msgid:{msg_id}'
+                        
+                        extracted_data.append({
+                            "Date": msg["Date"],
+                            "Sender": sender,
+                            "Subject": subject,
+                            "Summary": body[:150].replace('\n', ' '),
+                            "Search_Command": search_link
+                        })
+
+        return extracted_data
+
+# --- Execution ---
+if __name__ == "__main__":
+    EMAIL_USER = "xxx@gmail.com"
+    EMAIL_PASS = "xxxxxxxxxxxxxxxx"   #16digits 
+    scraper = EmailAutomation(EMAIL_USER, EMAIL_PASS)
+    if scraper.connect():
+        results = scraper.fetch_emails()
+        if results:
+            df = pd.DataFrame(results)
+            # Export without "Full Body"
+            df.to_excel("Email_auto.xlsx", index=False)
+            print(f"Process complete. {len(results)} items saved.")
